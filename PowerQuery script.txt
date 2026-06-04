@@ -1,0 +1,74 @@
+let
+    // Step 1: Get metadata
+    Meta = Json.Document(Web.Contents("https://api.scryfall.com/bulk-data/oracle-cards")),
+
+    // Step 2: Extract info
+    DownloadURL = Meta[download_uri],
+    LastUpdated = Meta[updated_at],
+    MetaID = Meta[id],
+
+    // Step 3: Fetch the full dataset
+    CardsRaw = Json.Document(
+        Web.Contents(DownloadURL)
+    ),
+
+    // Step 4: Convert list → table
+    ToTable = Table.FromList(CardsRaw, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+
+    // Step 5: Expand fields
+    Cards = Table.ExpandRecordColumn(
+        ToTable,
+        "Column1",
+        {"name", "mana_cost", "cmc", "type_line", "colors", "prices", "image_uris", "digital"}
+    ),
+
+    // Step 6: Expand prices → get usd
+    WithPrices = Table.ExpandRecordColumn(
+        Cards,
+        "prices",
+        {"usd"},
+        {"price_usd"}
+    ),
+
+    // Step 7: Expand image_uris → get normal
+    WithImages = Table.ExpandRecordColumn(
+        WithPrices,
+        "image_uris",
+        {"normal"},
+        {"image_normal"}
+    ),
+
+    // Step 8: Convert colors list to text
+    WithColors = Table.TransformColumns(
+        WithImages,
+        {"colors", each Text.Combine(List.Transform(_, Text.From), ", "), type text}
+    ),
+
+    // Step 9: Convert price to number
+    WithPriceTyped = Table.TransformColumnTypes(
+        WithColors,
+        {{"price_usd", type number}}
+    ),
+
+    // Step 10: Filter out digital cards
+Filtered = Table.SelectRows(
+    WithPriceTyped,
+    each [digital] = false
+),
+
+    // Step 11: Info row at the top
+    InfoRow = Table.FromRecords({[
+        name = "🕒 Last Updated: " & LastUpdated & " | ID: " & MetaID,
+        mana_cost = null,
+        cmc = null,
+        type_line = null,
+        colors = null,
+        price_usd = null,
+        image_normal = null
+    ]}),
+
+    // Step 12: Stack info row on top of cards
+    Final = Table.Combine({InfoRow, Filtered})
+
+in
+    Final
